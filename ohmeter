@@ -1,0 +1,226 @@
+
+#include <p18f4620.h>
+#include <stdio.h>
+#include <math.h>
+#include <usart.h>
+#include <stdlib.h>
+#include <xc.h>
+
+#pragma config OSC = INTIO67
+#pragma config WDT=OFF
+#pragma config LVP=OFF
+#pragma config BOREN =OFF
+#pragma config CCP2MX = PORTBE
+
+#define D1_RED      PORTBbits.RB4
+#define D1_GREEN    PORTBbits.RB5
+#define D2_RED      PORTBbits.RB0
+#define D2_GREEN    PORTBbits.RB1
+#define D2_BLUE     PORTBbits.RB2
+#define DP          PORTDbits.RD7
+
+char array[10] = {0x01, 0xcf, 0x12, 0x06, 0x4c, 0x24, 0x20, 0x0f, 0x00, 0x0c};
+
+//Definining variables
+float Tc;
+float Tf;
+int tempF;
+float temperature_F;
+
+//Defining functions
+void putch(char);
+void Init_UART();
+void Init_ADC();
+unsigned int get_full_ADC(void);
+void Select_ADC_Channel(char);
+void DO_DISPLAY_7SEG_Upper(char);
+void DO_DISPLAY_7SEG_Lower(char);
+void WAIT_ONE_SEC();
+
+
+//Setting up the uart
+void Init_UART()
+{
+    OpenUSART (USART_TX_INT_OFF & USART_RX_INT_OFF &
+    USART_ASYNCH_MODE & USART_EIGHT_BIT & USART_CONT_RX &
+    USART_BRGH_HIGH, 25);
+    OSCCON = 0x60;
+}
+
+void putch (char c)
+{
+    while (!TRMT);
+    TXREG = c;
+}
+
+void Init_ADC(void)
+{
+    ADCON0=0x01; // select channel AN1, and turn on the ADC subsystem
+    ADCON1=0x17 ; // select pins AN0 through AN4 as analog signal, VDD-VSS as
+    // reference voltage
+    ADCON2=0xA9; // right justify the result. Set the bit conversion time (TAD) and
+    // acquisition time
+}
+
+//Function to do conversions of analog to digital voltage readings
+unsigned int get_full_ADC(void)
+{
+    int result;
+    ADCON0bits.GO=1; // Start Conversion
+    while(ADCON0bits.DONE==1); // wait for conversion to be completed
+    result = (ADRESH * 0x100) + ADRESL; // combine result of upper byte and
+    // lower byte into result
+    return result; // return the result.
+}
+
+//Delay function
+void WAIT_ONE_SEC()
+{
+    for (int j = 0; j < 0xffff; j ++);
+}
+
+void Select_ADC_Channel (char channel)
+{
+    ADCON0 = channel * 4 + 1;
+}
+
+//Functions for the seven segment displays
+void DO_DISPLAY_7SEG_Upper (char digit)
+{
+    PORTC = array[digit] & 0x3F;
+    char PE = array[digit] & 0x40;
+    if (PE == 0) PORTE = 0x00;
+    else PORTE = 0x01;
+}
+
+void DO_DISPLAY_7SEG_Lower (char digit)
+{
+    PORTD = array[digit];
+}
+
+// Functions defining the colors of the leds. 
+
+void SET_D1_YELLOW()
+{
+    D1_RED = 1;
+    D1_GREEN = 1;
+}
+
+void SET_D1_OFF()
+{
+    D1_RED = 0;
+    D1_GREEN = 0;
+}
+
+
+// Function controlling D1 and D2 RGB leds. Depending on the temperature, they are assigned a color. 
+void SET_D_2(float A)
+{
+    PORTB = 0x00;
+    int T = (int) A / 10;
+    if (T>7)    T=7;
+    char D2_Array[8] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07};
+    PORTB = PORTB + D2_Array[T];
+    
+ 
+}
+
+void SET_D_1(float T)
+{
+    if (T < 0.070)
+    {
+        SET_D1_YELLOW();
+    }
+    else
+    {
+        SET_D1_OFF();
+    }
+}
+// Functions defining for buzzer activation/deactivation. 
+void Activate_Buzzer() 
+{ 
+    PR2 = 0b11111001 ; 
+    T2CON = 0b00000101 ; 
+    CCPR2L = 0b01001010 ; 
+    CCP2CON = 0b00111100 ; 
+} 
+
+void Deactivate_Buzzer() 
+{ 
+    CCP2CON = 0x0; 
+    PORTBbits.RB3 = 0; 
+} 
+
+void SET_BUZZER(float T)
+{
+    if (T < 0.070)
+    {
+        Activate_Buzzer();
+    }
+    else
+    {
+        Deactivate_Buzzer();
+    }
+}
+
+void main ()
+{
+
+    //Initializing the uart, adc, and the Ports as inputs or outputs
+    Init_UART();
+    Init_ADC();
+    TRISA = 0x27;
+    TRISB = 0x00;
+    TRISC = 0x00;
+    TRISD = 0x00;
+    TRISE = 0x00;
+    PORTC = 0xFF;
+    PORTD = 0xFF;
+    PORTB = 0xFF;
+   
+    
+    while (1)
+    {
+//        for (int i = 0; i < 10; i ++)
+//        {
+//            DO_DISPLAY_7SEG_Upper(i);
+//            DO_DISPLAY_7SEG_Lower(i);
+//            WAIT_ONE_SEC();
+//        }
+       
+       Select_ADC_Channel (4);
+       int num_step = get_full_ADC();
+       char U;
+       char L;
+       float RL;
+       float volt = num_step * 4 / 1000.0;
+       RL = 10 * volt / (4.096 - volt);
+       if (RL < 10.0)
+       {
+           U = (int) RL;
+           L = (int)((RL - U)*10);
+           DO_DISPLAY_7SEG_Upper(U);
+           DO_DISPLAY_7SEG_Lower(L);
+           DP = 0;
+       }
+       else 
+       {
+           U = (int) (RL / 10);
+           L = ((int) RL) % 10;
+           DO_DISPLAY_7SEG_Upper(U);
+           DO_DISPLAY_7SEG_Lower(L);
+           DP = 1;
+       }
+       
+       SET_D_2(RL);
+       SET_D_1(RL);
+       SET_BUZZER(RL);
+       
+       printf ("Resistance = %f\r\n", RL);
+       // printf ("Voltage = %f\r\n", volt);
+       
+       //Delay
+       WAIT_ONE_SEC();
+    }
+}
+
